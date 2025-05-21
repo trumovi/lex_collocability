@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Проверка коллокаций</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Проверка сочетаемости слов</h1>
+        <div class="input-area">
+            <textarea id="text-input" placeholder="Введите текст для проверки..."></textarea>
+            <div class="controls">
+                <div class="method-buttons">
+                    <button id="dict-button" class="method-button active">Проверка по словарю</button>
+                    <button id="vector-button" class="method-button">Векторный метод</button>
+                </div>
+            </div>
+        </div>
+        <div id="loading" class="loading" style="display: none;">
+            <div class="spinner"></div>
+            <div>Идет проверка...</div>
+        </div>
+        <div id="error-message" class="error-message" style="display: none;"></div>
+        <div id="results" class="results-area"></div>
+    </div>
+
+    <script>
+        let currentMethod = 'dictionary';
+
+        // Обработчики для кнопок методов
+        document.getElementById('dict-button').addEventListener('click', function() {
+            currentMethod = 'dictionary';
+            this.classList.add('active');
+            document.getElementById('vector-button').classList.remove('active');
+            checkText();
+        });
+
+        document.getElementById('vector-button').addEventListener('click', function() {
+            currentMethod = 'vector';
+            this.classList.add('active');
+            document.getElementById('dict-button').classList.remove('active');
+            checkText();
+        });
+
+        async function checkText() {
+            const text = document.getElementById('text-input').value;
+
+            if (!text.trim()) {
+                showError('Пожалуйста, введите текст для проверки');
+                return;
+            }
+
+            // Показать индикатор загрузки
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('error-message').style.display = 'none';
+            document.getElementById('results').innerHTML = '';
+
+            try {
+                const response = await fetch('/check', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        text,
+                        method: currentMethod
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    showError(data.error);
+                } else {
+                    displayResults(data.results);
+                }
+            } catch (error) {
+                showError('Ошибка соединения с сервером');
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+
+        function showError(message) {
+            const errorDiv = document.getElementById('error-message');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+
+        function displayResults(results) {
+            const resultsContainer = document.getElementById('results');
+            resultsContainer.innerHTML = '';
+
+            if (results.length === 0) {
+                resultsContainer.innerHTML = `
+                    <div class="success-message">
+                        Нарушений сочетаемости не найдено!<br>
+                        <small>Метод проверки: ${currentMethod === 'dictionary' ? 'Словарный' : 'Векторный'}</small>
+                    </div>
+                `;
+                return;
+            }
+
+            // Добавляем информацию о методе проверки
+            const methodInfo = document.createElement('div');
+            methodInfo.className = 'method-info';
+            methodInfo.textContent = `Метод проверки: ${currentMethod === 'dictionary' ? 'Словарный' : 'Векторный'}`;
+            resultsContainer.appendChild(methodInfo);
+
+            results.forEach(result => {
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'error-item';
+
+                // Добавляем информацию о частотности текущего сочетания
+                const frequencyInfo = document.createElement('div');
+                frequencyInfo.className = 'frequency-info';
+                frequencyInfo.textContent = result.frequency || 'Информация о частотности недоступна';
+
+                errorDiv.innerHTML = `
+                    <div class="error-text">Нарушение: ${result.error}</div>
+                    <div class="frequency-info">${result.frequency || 'Информация о частотности недоступна'}</div>
+                    <div class="corrections">
+                        <div class="corrections-title">Возможные исправления:</div>
+                        <ul>
+                            ${result.corrections.map(corr => `<li>${corr}</li>`).join('')}
+                        </ul>
+                    </div>
+                `;
+                resultsContainer.appendChild(errorDiv);
+            });
+        }
+    </script>
+</body>
+</html>
