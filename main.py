@@ -4,7 +4,7 @@ import glob
 import pandas as pd
 import csv
 import os
-from scipy.spatial.distance import cosine
+from sklearn.metrics.pairwise import cosine_similarity
 from gensim.models import KeyedVectors
 
 directory_path = r"C:\Users\trumovi\PycharmProjects\lex_prime\corpora"
@@ -48,6 +48,11 @@ word_vectors = KeyedVectors.load("model/model.model")
 nlp = spacy.load("ru_core_news_sm")
 morph = pymorphy3.MorphAnalyzer()
 
+def lemmatize_noun(noun):
+    parsed = morph.parse(noun)[0]
+    if 'NOUN' in parsed.tag:
+        return parsed.normal_form
+    return noun
 
 def find_collocation_errors(text):
     doc = nlp(text)
@@ -59,10 +64,10 @@ def find_collocation_errors(text):
             dependencies = []
             for child in token.children:
                 if child.pos_ in ["NOUN"]:
-                    dependencies.append((child.text, child.lemma_))
-                    for adp in child.children:
-                        if adp.pos_ == "ADP":
-                            dependencies.remove((child.text, child.lemma_))
+                    noun_lemma = lemmatize_noun(child.text)
+                    has_adp = any(adp.pos_ == "ADP" for adp in child.children)
+                    if not has_adp:
+                        dependencies.append((child.text, noun_lemma))
             for dep, dep_lemma in dependencies:
                 verb_in_dict = verb_lemma in collocations_dict
                 dep_in_dict = dep_lemma in collocations_dict
@@ -75,40 +80,45 @@ def find_collocation_errors(text):
                             or verb_lemma in collocations_dict.get(dep_lemma, [])
                     )
                     if not is_valid:
-                        errors.append(((verb_lemma.lower(), dep_lemma.lower()), (verb_text.lower(), dep.lower())))
+                        errors.append({(verb_lemma.lower(), dep_lemma.lower()), (verb_text.lower(), dep.lower())})
     return errors
 
 
 def is_collocation_valid(word1, word2, threshold=0.25):
     try:
-        vec1 = word_vectors[word1]
-        vec2 = word_vectors[word2]
-        similarity = 1 - cosine(vec1, vec2)
-        return similarity >= threshold
+        vec1 = word_vectors[word1].reshape(1, -1)
+        vec2 = word_vectors[word2].reshape(1, -1)
+        similarity = cosine_similarity(vec1, vec2)[0][0]
+        return similarity >= threshold, similarity
     except KeyError:
-        return False
+        return False, 0.0
 
 
 def find_collocation_errors_vec(text):
-    doc = nlp(text)
+    target_words = {
+        'оплатить', 'влияние', 'решение', 'обязанность', 'совет',
+        'вопрос', 'обсуждать', 'ошибка', 'мнение', 'интерес'
+    }
+    doc = nlp(text.lower())
     errors = []
     for token in doc:
         if token.pos_ == "VERB":
             verb = token.text
-            verb_lemma = token.lemma_
             verb_lemma = token.lemma_.replace('ё', 'е')
             dependencies = []
             for child in token.children:
-                if child.pos_ in ["NOUN", "ADJ"]:
-                    dependencies.append((child.text, child.lemma_.replace('ё', 'е')))
-                    for adp in child.children:
-                        if adp.pos_ == "ADP":
-                            dependencies.remove((child.text, child.lemma_))
-            for dep, dep_lemma in dependencies:
-                if not is_collocation_valid(verb_lemma, dep_lemma):
-                    errors.append(((verb_lemma, dep_lemma), (verb, dep)))
-    return errors
+                if child.pos_ in ["NOUN"]:
+                    noun_lemma = lemmatize_noun(child.text).replace('ё', 'е')
+                    has_adp = any(adp.pos_ == "ADP" for adp in child.children)
+                    if not has_adp:
+                        dependencies.append({child.text, noun_lemma})
 
+            for dep, dep_lemma in dependencies:
+                if verb_lemma in target_words or dep_lemma in target_words:
+                    is_valid, similarity = is_collocation_valid(verb_lemma, dep_lemma)
+                    if not is_valid:
+                        errors.append(((verb_lemma, dep_lemma), (verb, dep), similarity))
+    return errors
 
 def suggest_corrections(verb, dep):
     suggestions = []
